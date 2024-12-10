@@ -206,7 +206,8 @@ class FtqToIfuIO(implicit p: Parameters) extends XSBundle {
 class FtqToICacheIO(implicit p: Parameters) extends XSBundle {
   // NOTE: req.bits must be prepare in T cycle
   // while req.valid is set true in T + 1 cycle
-  val req = Decoupled(new FtqToICacheRequestBundle)
+  val req          = Decoupled(new FtqToICacheRequestBundle)
+  val flushFromBpu = new BpuFlushInfo
 }
 
 class FtqToPrefetchIO(implicit p: Parameters) extends XSBundle {
@@ -745,6 +746,8 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   io.toIfu.flushFromBpu.s2.bits       := bpu_s2_resp.ftq_idx
   io.toPrefetch.flushFromBpu.s2.valid := bpu_s2_redirect
   io.toPrefetch.flushFromBpu.s2.bits  := bpu_s2_resp.ftq_idx
+  io.toICache.flushFromBpu.s2.valid   := bpu_s2_redirect
+  io.toICache.flushFromBpu.s2.bits    := bpu_s2_resp.ftq_idx
   when(bpu_s2_redirect) {
     bpuPtr := bpu_s2_resp.ftq_idx + 1.U
     copied_bpu_ptr.map(_ := bpu_s2_resp.ftq_idx + 1.U)
@@ -764,6 +767,8 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   io.toIfu.flushFromBpu.s3.bits       := bpu_s3_resp.ftq_idx
   io.toPrefetch.flushFromBpu.s3.valid := bpu_s3_redirect
   io.toPrefetch.flushFromBpu.s3.bits  := bpu_s3_resp.ftq_idx
+  io.toICache.flushFromBpu.s3.valid   := bpu_s3_redirect
+  io.toICache.flushFromBpu.s3.bits    := bpu_s3_resp.ftq_idx
   when(bpu_s3_redirect) {
     bpuPtr := bpu_s3_resp.ftq_idx + 1.U
     copied_bpu_ptr.map(_ := bpu_s3_resp.ftq_idx + 1.U)
@@ -780,7 +785,7 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   }
 
   XSError(isBefore(bpuPtr, ifuPtr) && !isFull(bpuPtr, ifuPtr), "\nifuPtr is before bpuPtr!\n")
-  XSError(isBefore(bpuPtr, pfPtr) && !isFull(bpuPtr, pfPtr), "\npfPtr is before bpuPtr!\n")
+//  XSError(isBefore(bpuPtr, pfPtr) && !isFull(bpuPtr, pfPtr), "\npfPtr is before bpuPtr!\n")
   XSError(isBefore(ifuWbPtr, commPtr) && !isFull(ifuWbPtr, commPtr), "\ncommPtr is before ifuWbPtr!\n")
 
   (0 until copyNum).map(i => XSError(copied_bpu_ptr(i) =/= bpuPtr, "\ncopiedBpuPtr is different from bpuPtr!\n"))
@@ -810,16 +815,20 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
 
   io.toIfu.req.bits.ftqIdx := ifuPtr
 
-  val toICachePcBundle               = Wire(Vec(copyNum, new Ftq_RF_Components))
-  val toICacheEntryToSend            = Wire(Vec(copyNum, Bool()))
-  val nextCycleToPrefetchPcBundle    = Wire(new Ftq_RF_Components)
-  val nextCycleToPrefetchEntryToSend = Wire(Bool())
-  val toPrefetchPcBundle             = RegNext(nextCycleToPrefetchPcBundle)
-  val toPrefetchEntryToSend          = RegNext(nextCycleToPrefetchEntryToSend)
-  val toIfuPcBundle                  = Wire(new Ftq_RF_Components)
-  val entry_is_to_send               = WireInit(entry_fetch_status(ifuPtr.value) === f_to_send)
-  val entry_ftq_offset               = WireInit(cfiIndex_vec(ifuPtr.value))
-  val entry_next_addr                = Wire(UInt(VAddrBits.W))
+  val toICachePcBundle    = Wire(Vec(copyNum, new Ftq_RF_Components))
+  val toICacheEntryToSend = Wire(Vec(copyNum, Bool()))
+//  val nextCycleToPrefetchPcBundle    = Wire(new Ftq_RF_Components)
+//  val nextCycleToPrefetchEntryToSend = Wire(Bool())
+//  val toPrefetchPcBundle             = RegNext(nextCycleToPrefetchPcBundle)
+//  val toPrefetchEntryToSend          = RegNext(nextCycleToPrefetchEntryToSend)
+
+  val toPrefetchPcBundle    = Wire(new Ftq_RF_Components)
+  val toPrefetchEntryToSend = Wire(Bool())
+
+  val toIfuPcBundle    = Wire(new Ftq_RF_Components)
+  val entry_is_to_send = WireInit(entry_fetch_status(ifuPtr.value) === f_to_send)
+  val entry_ftq_offset = WireInit(cfiIndex_vec(ifuPtr.value))
+  val entry_next_addr  = Wire(UInt(VAddrBits.W))
 
   val pc_mem_ifu_ptr_rdata   = VecInit(Seq.fill(copyNum)(RegNext(ftq_pc_mem.io.ifuPtr_rdata)))
   val pc_mem_ifu_plus1_rdata = VecInit(Seq.fill(copyNum)(RegNext(ftq_pc_mem.io.ifuPtrPlus1_rdata)))
@@ -845,18 +854,38 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
     }
   }
 
-  // Calculate requests sent to prefetcher one cycle in advance to cut critical path
-  when(bpu_in_fire && bpu_in_resp_ptr === pfPtr_write) {
-    nextCycleToPrefetchPcBundle    := ftq_pc_mem.io.wdata
-    nextCycleToPrefetchEntryToSend := true.B
-  }.elsewhen(io.toPrefetch.req.fire) {
-    nextCycleToPrefetchPcBundle := ftq_pc_mem.io.pfPtrPlus1_rdata
-    nextCycleToPrefetchEntryToSend := entry_fetch_status(pfPtrPlus1.value) === f_to_send ||
-      last_cycle_bpu_in && bpu_in_bypass_ptr === pfPtrPlus1
+//  // Calculate requests sent to prefetcher one cycle in advance to cut critical path
+//  when(bpu_in_fire && bpu_in_resp_ptr === pfPtr_write) {
+//    nextCycleToPrefetchPcBundle    := ftq_pc_mem.io.wdata
+//    nextCycleToPrefetchEntryToSend := true.B
+//  }.elsewhen(io.toPrefetch.req.fire) {
+//    nextCycleToPrefetchPcBundle := ftq_pc_mem.io.pfPtrPlus1_rdata
+//    nextCycleToPrefetchEntryToSend := entry_fetch_status(pfPtrPlus1.value) === f_to_send ||
+//      last_cycle_bpu_in && bpu_in_bypass_ptr === pfPtrPlus1
+//  }.otherwise {
+//    nextCycleToPrefetchPcBundle := ftq_pc_mem.io.pfPtr_rdata
+//    nextCycleToPrefetchEntryToSend := entry_fetch_status(pfPtr.value) === f_to_send ||
+//      last_cycle_bpu_in && bpu_in_bypass_ptr === pfPtr // reduce potential bubbles
+//  }
+
+  when(bpu_in_fire && bpu_in_resp_ptr === pfPtr || bpu_s2_redirect && isAfter(pfPtr, bpu_s2_resp.ftq_idx)
+    || bpu_s3_redirect && isAfter(pfPtr, bpu_s3_resp.ftq_idx)) {
+    toPrefetchPcBundle    := ftq_pc_mem.io.wdata
+    toPrefetchEntryToSend := true.B
+  }.elsewhen(isBefore(pfPtr, bpuPtr)) {
+    toPrefetchPcBundle    := ftq_pc_mem.io.pfPtr_rdata
+    toPrefetchEntryToSend := entry_fetch_status(pfPtr.value) === f_to_send
   }.otherwise {
-    nextCycleToPrefetchPcBundle := ftq_pc_mem.io.pfPtr_rdata
-    nextCycleToPrefetchEntryToSend := entry_fetch_status(pfPtr.value) === f_to_send ||
-      last_cycle_bpu_in && bpu_in_bypass_ptr === pfPtr // reduce potential bubbles
+    toPrefetchPcBundle    := 0.U.asTypeOf(new Ftq_RF_Components)
+    toPrefetchEntryToSend := false.B
+  }
+
+  when(bpu_s2_redirect && isAfter(pfPtr, bpu_s2_resp.ftq_idx)) {
+    io.toPrefetch.req.bits.ftqIdx := bpu_s2_resp.ftq_idx
+  }.elsewhen(bpu_s3_redirect && isAfter(pfPtr, bpu_s3_resp.ftq_idx)) {
+    io.toPrefetch.req.bits.ftqIdx := bpu_s3_resp.ftq_idx
+  }.otherwise {
+    io.toPrefetch.req.bits.ftqIdx := pfPtr
   }
 
   // TODO: reconsider target address bypass logic
@@ -903,9 +932,9 @@ class Ftq(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHelpe
   io.toICache.req.bits.backendIgpf := backendIgpf && backendPcFaultPtr === ifuPtr
   io.toICache.req.bits.backendIaf  := backendIaf && backendPcFaultPtr === ifuPtr
 
-  io.toPrefetch.req.valid := toPrefetchEntryToSend && pfPtr =/= bpuPtr
+  io.toPrefetch.req.valid := toPrefetchEntryToSend
   io.toPrefetch.req.bits.fromFtqPcBundle(toPrefetchPcBundle)
-  io.toPrefetch.req.bits.ftqIdx := pfPtr
+//  io.toPrefetch.req.bits.ftqIdx := pfPtr
   // io.toICache.req.bits.bypassSelect := last_cycle_bpu_in && bpu_in_bypass_ptr === ifuPtr
   // io.toICache.req.bits.bpuBypassWrite.zipWithIndex.map{case(bypassWrtie, i) =>
   //   bypassWrtie.startAddr := bpu_in_bypass_buf.tail(i).startAddr

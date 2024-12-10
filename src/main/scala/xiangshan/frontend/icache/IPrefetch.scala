@@ -64,14 +64,15 @@ class IPrefetchIO(implicit p: Parameters) extends IPrefetchBundle {
   val csr_parity_enable = Input(Bool())
   val flush             = Input(Bool())
 
-  val req            = Flipped(Decoupled(new IPrefetchReq))
-  val flushFromBpu   = Flipped(new BpuFlushInfo)
-  val itlb           = Vec(PortNumber, new TlbRequestIO)
-  val pmp            = Vec(PortNumber, new ICachePMPBundle)
-  val metaRead       = new ICacheMetaReqBundle
-  val MSHRReq        = DecoupledIO(new ICacheMissReq)
-  val MSHRResp       = Flipped(ValidIO(new ICacheMissResp))
-  val wayLookupWrite = DecoupledIO(new WayLookupInfo)
+  val req                   = Flipped(Decoupled(new IPrefetchReq))
+  val flushFromBpu          = Flipped(new BpuFlushInfo)
+  val itlb                  = Vec(PortNumber, new TlbRequestIO)
+  val pmp                   = Vec(PortNumber, new ICachePMPBundle)
+  val metaRead              = new ICacheMetaReqBundle
+  val MSHRReq               = DecoupledIO(new ICacheMissReq)
+  val MSHRResp              = Flipped(ValidIO(new ICacheMissResp))
+  val wayLookupWrite        = DecoupledIO(new WayLookupInfo)
+  val wayLookupFlushFromBpu = Output(Bool())
 }
 
 class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
@@ -83,11 +84,11 @@ class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
   val (toMSHR, fromMSHR) = (io.MSHRReq, io.MSHRResp)
   val toWayLookup        = io.wayLookupWrite
 
-  val s0_fire, s1_fire, s2_fire            = WireInit(false.B)
-  val s0_discard, s2_discard               = WireInit(false.B)
-  val s0_ready, s1_ready, s2_ready         = WireInit(false.B)
-  val s0_flush, s1_flush, s2_flush         = WireInit(false.B)
-  val from_bpu_s0_flush, from_bpu_s1_flush = WireInit(false.B)
+  val s0_fire, s1_fire, s2_fire                               = WireInit(false.B)
+  val s0_discard, s2_discard                                  = WireInit(false.B)
+  val s0_ready, s1_ready, s2_ready                            = WireInit(false.B)
+  val s0_flush, s1_flush, s2_flush                            = WireInit(false.B)
+  val from_bpu_s0_flush, from_bpu_s1_flush, from_bpu_s2_flush = WireInit(false.B)
 
   /**
     ******************************************************************************
@@ -458,8 +459,10 @@ class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
   }
 
   /** Stage 1 control */
-  from_bpu_s1_flush := s1_valid && !s1_isSoftPrefetch && io.flushFromBpu.shouldFlushByStage3(s1_req_ftqIdx)
-  s1_flush          := io.flush || from_bpu_s1_flush
+//  from_bpu_s1_flush := s1_valid && !s1_isSoftPrefetch && io.flushFromBpu.shouldFlushByStage3(s1_req_ftqIdx)
+  from_bpu_s1_flush := s1_valid && !s1_isSoftPrefetch && (io.flushFromBpu.shouldFlushByStage2(s1_req_ftqIdx) ||
+    io.flushFromBpu.shouldFlushByStage3(s1_req_ftqIdx))
+  s1_flush := io.flush || from_bpu_s1_flush || s2_flush
 
   s1_ready := next_state === m_idle
   s1_fire  := (next_state === m_idle) && s1_valid && !s1_flush // used to clear s1_valid & itlb_valid_latch
@@ -479,6 +482,7 @@ class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
   val s2_isSoftPrefetch = RegEnable(s1_isSoftPrefetch, 0.U.asTypeOf(s1_isSoftPrefetch), s1_real_fire)
   val s2_doubleline     = RegEnable(s1_doubleline, 0.U.asTypeOf(s1_doubleline), s1_real_fire)
   val s2_req_paddr      = RegEnable(s1_req_paddr, 0.U.asTypeOf(s1_req_paddr), s1_real_fire)
+  val s2_req_ftqIdx     = RegEnable(s1_req_ftqIdx, 0.U.asTypeOf(s1_req_ftqIdx), s1_real_fire)
   val s2_exception =
     RegEnable(s1_exception_out, 0.U.asTypeOf(s1_exception_out), s1_real_fire) // includes itlb/pmp exception
 //  val s2_exception_in = RegEnable(s1_exception_out, 0.U.asTypeOf(s1_exception_out), s1_real_fire)  // disabled for timing consideration
@@ -559,7 +563,10 @@ class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
 
   toMSHR <> toMSHRArbiter.io.out
 
-  s2_flush := io.flush
+  from_bpu_s2_flush := s2_valid && !s2_isSoftPrefetch && io.flushFromBpu.shouldFlushByStage3(s2_req_ftqIdx)
+  s2_flush          := io.flush || from_bpu_s2_flush
+
+  io.wayLookupFlushFromBpu := from_bpu_s2_flush
 
   // toMSHRArbiter.io.in(i).fire is not used here for timing consideration
   // val s2_finish  = (0 until PortNumber).map(i => has_send(i) || !s2_miss(i) || toMSHRArbiter.io.in(i).fire).reduce(_&&_)
@@ -571,6 +578,7 @@ class IPrefetchPipe(implicit p: Parameters) extends IPrefetchModule {
   // the number of bpu flush
   XSPerfAccumulate("bpu_s0_flush", from_bpu_s0_flush)
   XSPerfAccumulate("bpu_s1_flush", from_bpu_s1_flush)
+  XSPerfAccumulate("bpu_s2_flush", from_bpu_s2_flush)
   // the number of prefetch request received from ftq or backend (software prefetch)
 //  XSPerfAccumulate("prefetch_req_receive", io.req.fire)
   XSPerfAccumulate("prefetch_req_receive_hw", io.req.fire && !io.req.bits.isSoftPrefetch)

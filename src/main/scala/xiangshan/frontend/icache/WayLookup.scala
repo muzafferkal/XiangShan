@@ -59,10 +59,11 @@ class WayLookupInfo(implicit p: Parameters) extends ICacheBundle {
 }
 
 class WayLookupInterface(implicit p: Parameters) extends ICacheBundle {
-  val flush  = Input(Bool())
-  val read   = DecoupledIO(new WayLookupInfo)
-  val write  = Flipped(DecoupledIO(new WayLookupInfo))
-  val update = Flipped(ValidIO(new ICacheMissResp))
+  val flush        = Input(Bool())
+  val flushFromBpu = Input(Bool())
+  val read         = DecoupledIO(new WayLookupInfo)
+  val write        = Flipped(DecoupledIO(new WayLookupInfo))
+  val update       = Flipped(ValidIO(new ICacheMissResp))
 }
 
 class WayLookup(implicit p: Parameters) extends ICacheModule {
@@ -85,14 +86,14 @@ class WayLookup(implicit p: Parameters) extends ICacheModule {
   private val empty = readPtr === writePtr
   private val full  = (readPtr.value === writePtr.value) && (readPtr.flag ^ writePtr.flag)
 
-  when(io.flush) {
+  when(io.flush || io.flushFromBpu) {
     writePtr.value := 0.U
     writePtr.flag  := false.B
   }.elsewhen(io.write.fire) {
     writePtr := writePtr + 1.U
   }
 
-  when(io.flush) {
+  when(io.flush || io.flushFromBpu) {
     readPtr.value := 0.U
     readPtr.flag  := false.B
   }.elsewhen(io.read.fire) {
