@@ -299,7 +299,7 @@ class LoadPipe(id: Int)(implicit p: Parameters) extends DCacheModule with HasPer
   // get s1_will_send_miss_req in lpad_s1
   val s1_has_permission = s1_hit_coh.onAccess(s1_req.cmd)._1
   val s1_new_hit_coh = s1_hit_coh.onAccess(s1_req.cmd)._3
-  val s1_hit = s1_tag_match_dup_dc // && s1_has_permission && s1_hit_coh === s1_new_hit_coh
+  val s1_hit = s1_tag_match_dup_dc && s1_has_permission && s1_hit_coh === s1_new_hit_coh
   val s1_will_send_miss_req = s1_valid && !s1_nack && !s1_hit
 
   // data read
@@ -552,7 +552,11 @@ class LoadPipe(id: Int)(implicit p: Parameters) extends DCacheModule with HasPer
 
   io.replace_access.valid := s3_valid && s3_hit
   io.replace_access.bits.set := RegNext(RegNext(get_idx(s1_req.vaddr)))
-  io.replace_access.bits.way := RegNext(RegNext(OHToUInt(s1_tag_match_way_dup_dc)))
+  val s2_tag_match_way_idx_oh = Wire(UInt(DCacheWays.W))
+  s2_tag_match_way_idx_oh := RegNext(s1_tag_match_way_dup_dc)
+  val s2_tag_match_way_idx = Wire(UInt((log2Up(DCacheWays)).W))
+  s2_tag_match_way_idx := OHToUInt(s2_tag_match_way_idx_oh)
+  io.replace_access.bits.way := RegNext(s2_tag_match_way_idx)
 
   // update access bit
   io.access_flag_write.valid := s3_valid && s3_hit && !s3_is_prefetch
