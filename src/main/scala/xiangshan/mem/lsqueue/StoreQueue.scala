@@ -787,15 +787,17 @@ class StoreQueue(implicit p: Parameters) extends XSModule
   val s_idle :: s_req :: s_resp :: s_wb :: s_wait :: Nil = Enum(5)
   val uncacheState = RegInit(s_idle)
   val uncacheUop = Reg(new DynInst)
-  val uncacheVAddr = Reg(UInt(VAddrBits.W))
   val cboFlushedSb = RegInit(false.B)
   val cmoOpCode = uncacheUop.fuOpType(1, 0)
-  switch(uncacheState) {
+  val mmioDoReq = io.uncache.req.fire && !io.uncache.req.bits.nc
+  val cboMmioPAddr = Reg(UInt(PAddrBits.W))
+  switch(mmioState) {
     is(s_idle) {
       when(RegNext(io.rob.pendingst && uop(deqPtr).robIdx === io.rob.pendingPtr && pending(deqPtr) && allocated(deqPtr) && datavalid(deqPtr) && addrvalid(deqPtr))) {
         uncacheState := s_req
         uncacheUop := uop(deqPtr)
         cboFlushedSb := false.B
+        cboMmioPAddr := paddrModule.io.rdata(0)
       }
     }
     is(s_req) {
@@ -842,7 +844,7 @@ class StoreQueue(implicit p: Parameters) extends XSModule
 
   // CBO op type check can be delayed for 1 cycle,
   // as uncache op will not start in s_idle
-  val cboMmioAddr = get_block_addr(paddrModule.io.rdata(0))
+  val cboMmioAddr = get_block_addr(cboMmioPAddr)
   val deqCanDoCbo = GatedRegNext(LSUOpType.isCbo(uop(deqPtr).fuOpType) && allocated(deqPtr) && addrvalid(deqPtr))
   when (deqCanDoCbo) {
     // disable uncache channel
