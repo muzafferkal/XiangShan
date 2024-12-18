@@ -27,7 +27,6 @@ import utils._
 import xiangshan._
 import xiangshan.cache._
 import xiangshan.cache.{DCacheLineIO, DCacheWordIO, MemoryOpConstants}
-import xiangshan.cache.{CMOReq, CMOResp}
 import xiangshan.backend._
 import xiangshan.backend.rob.{RobLsqIO, RobPtr}
 import xiangshan.backend.Bundles.{DynInst, MemExuOutput}
@@ -35,6 +34,7 @@ import xiangshan.backend.decode.isa.bitfield.{Riscv32BitInst, XSInstBitFields}
 import xiangshan.backend.fu.FuConfig._
 import xiangshan.backend.fu.FuType
 import xiangshan.ExceptionNO._
+import coupledL2._
 
 class SqPtr(implicit p: Parameters) extends CircularQueuePtr[SqPtr](
   p => p(XSCoreParamsKey).StoreQueueSize
@@ -789,9 +789,8 @@ class StoreQueue(implicit p: Parameters) extends XSModule
   val uncacheUop = Reg(new DynInst)
   val cboFlushedSb = RegInit(false.B)
   val cmoOpCode = uncacheUop.fuOpType(1, 0)
-  val mmioDoReq = io.uncache.req.fire && !io.uncache.req.bits.nc
   val cboMmioPAddr = Reg(UInt(PAddrBits.W))
-  switch(mmioState) {
+  switch(uncacheState) {
     is(s_idle) {
       when(RegNext(io.rob.pendingst && uop(deqPtr).robIdx === io.rob.pendingPtr && pending(deqPtr) && allocated(deqPtr) && datavalid(deqPtr) && addrvalid(deqPtr))) {
         uncacheState := s_req
