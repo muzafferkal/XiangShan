@@ -316,7 +316,7 @@ jobs:
       - name: Build XiangShan
         run: |
           echo "NOOP_HOME=$XS_HOME" >> $GITHUB_ENV
-          make verilog GOALS="diff" RELEASE_EXTRA_ARGS="--enable-difftest --difftest-config ZESNH" WITH_CHISELDB=0 WITH_CONSTANTIN=0 PLDM=1 CONFIG=XSNoCTopConfig JVM_XMX=10G
+          make verilog RELEASE_EXTRA_ARGS="--enable-difftest --difftest-config ZESNH" WITH_CHISELDB=0 WITH_CONSTANTIN=0 CONFIG=XSNoCTopConfig JVM_XMX=10G
       - name: Build Difftest
         run: |
           cd difftest
