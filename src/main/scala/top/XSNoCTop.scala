@@ -244,6 +244,15 @@ class XSNoCDiffTop(implicit p: Parameters) extends Module {
   exposeOptionIO(soc.noc_reset, "noc_reset")
   exposeOptionIO(soc.imsic_axi4lite, "imsic_axi4lite")
 
+  // FIXME:
+  // As XSDiffTop is only part of DUT, we can not instantiate difftest here.
+  // We temporarily collect emulation counters for each DiffTop
+  // Need to pass these control signals from Difftest
+  val timer = IO(Input(UInt(64.W)))
+  val logEnable = IO(Input(Bool()))
+  val clean = IO(Input(Bool()))
+  val dump = IO(Input(Bool()))
+  XSLog.collect(timer, logEnable, clean, dump)
   DifftestWiring.createAndConnectExtraIOs()
   Profile.generateJson("XiangShan")
   XSTop_wrapperGenerator.generateCIVerilog()
@@ -261,6 +270,15 @@ object XSTop_wrapperGenerator {
         | input                                 sys_clk,
         | input                                 sys_rstn
         |);
+        |wire [63:0] timer;
+        |wire logEnable;
+        |wire clean;
+        |wire dump;
+        |// FIXME: use siganls from Difftest rather than default value
+        |assign timer = 64'b0;
+        |assign logEnable = 1'b0;
+        |assign clean = 1'b0;
+        |assign dump = 1'b0;
         |gateway_if gateway_if_i();
         |core_if core_if_o[`CONFIG_XSCORE_NR]();
         |generate
@@ -280,6 +298,10 @@ object XSTop_wrapperGenerator {
         |        .noc_clock               (sys_clk),
         |        .soc_clock               (sys_clk),
         |        .io_hartId               (64'h0 + i),
+        |        .timer                   (timer),
+        |        .logEnable               (logEnable),
+        |        .clean                   (clean),
+        |        .dump                    (dump),
         |        .gateway_out             (core_if_o[i])
         |    );
         |    end
