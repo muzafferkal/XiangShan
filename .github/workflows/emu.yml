@@ -331,8 +331,8 @@ jobs:
       - name: MC Interface Build Test
         run: |
           cd $GITHUB_ENV
-          python3 $XS_DIFF_HOME/scripts/st_tools/interface.py $XS_HOME/build/rtl/GatewayEndpoint.sv --filelist $XS_DIFF_RTL/filelist.f --simtop $XS_DIFF_RTL/simtop.sv
-          python3 $XS_DIFF_HOME/scripts/st_tools/interface.py $XS_DIFF_RTL/XSDiffTop.sv --core
+          python3 $XS_DIFF_HOME/scripts/st_tools/interface.py $XS_DIFF_RTL/GatewayEndpoint.sv
+          python3 $XS_DIFF_HOME/scripts/st_tools/interface.py $XS_HOME/build/rtl/XSDiffTop.sv --core --filelist $XS_HOME/build/rtl/filelist.f --simtop $XS_HOME/build/rtl/simtop.sv
           cp -r $XS_DIFF_RTL $XS_HOME/build/rtl
           verilator --lint-only -Wno-fatal --top-module XSTop_wrapper build/rtl/*sv build/rtl/*v -Ibuild/generated-src/ -LDFLAGS -"lreadline"
   simv-basics:
